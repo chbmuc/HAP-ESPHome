@@ -496,11 +496,18 @@ enum PN532ReadReady PN532::read_ready_(bool block) {
 
 void PN532::turn_off_rf_() {
   ESP_LOGV(TAG, "Turning RF field OFF");
-  this->write_command_({
-      PN532_COMMAND_RFCONFIGURATION,
-      0x01,  // RF Field
-      0x00,  // Off
-  });
+  if (!this->write_command_({
+          PN532_COMMAND_RFCONFIGURATION,
+          0x01,  // RF Field
+          0x00,  // Off
+      })) {
+    ESP_LOGW(TAG, "Turn off RF field command failed");
+    return;
+  }
+  std::vector<uint8_t> response;
+  if (!this->read_response(PN532_COMMAND_RFCONFIGURATION, response)) {
+    ESP_LOGW(TAG, "Turn off RF field response failed");
+  }
 }
 
 std::unique_ptr<nfc::NfcTag> PN532::read_tag_(nfc::NfcTagUid &uid) {
