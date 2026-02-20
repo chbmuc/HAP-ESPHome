@@ -421,7 +421,8 @@ bool PN532::write_command_(const std::vector<uint8_t>& data) {
   // Postamble
   write_data.push_back(0x00);
 
-  this->write_data(write_data);
+  if (!this->write_data(write_data))
+    return false;
 
   return this->read_ack_();
 }
