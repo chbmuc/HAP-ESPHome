@@ -377,10 +377,15 @@ std::vector<uint8_t> PN532::inDataExchange(const std::vector<uint8_t>& data) {
       return std::vector<uint8_t>();
     }
   }
-  int timeout = 0;
-  while (this->read_ready_(true) != pn532::PN532ReadReady::READY) { timeout++; delay(1); if (timeout > 250) break; }
+  uint32_t start = millis();
+  while (this->read_ready_(true) != pn532::PN532ReadReady::READY) {
+    if (millis() - start > 1000) {
+      ESP_LOGW(TAG, "Timed out waiting for InDataExchange response");
+      return std::vector<uint8_t>();
+    }
+  }
 
-  std::vector<uint8_t> buffer(0);
+  std::vector<uint8_t> buffer;
   if (!this->read_response(PN532_COMMAND_INDATAEXCHANGE, buffer)) {
     ESP_LOGE(TAG, "Error getting response");
     // this->mark_failed();
