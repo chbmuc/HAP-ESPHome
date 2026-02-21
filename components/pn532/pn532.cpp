@@ -209,6 +209,23 @@ void PN532::loop() {
       this->send_ack_();
     }
     this->requested_ecp_ = false;
+
+    // Send InListPassiveTarget immediately after ECP, don't wait for next
+    // update() call. The iPhone activates NFC upon receiving ECP and expects
+    // REQA quickly — waiting a full polling interval risks session timeout.
+    if (this->next_flow_ == 1) {
+      if (!this->write_command_({
+              PN532_COMMAND_INLISTPASSIVETARGET,
+              0x01,  // max 1 card
+              0x00,  // baud rate ISO14443A (106 kbit/s)
+          })) {
+        ESP_LOGW(TAG, "Requesting tag read failed!");
+        this->status_set_warning();
+        return;
+      }
+      this->status_clear_warning();
+      this->requested_read_ = true;
+    }
     return;
   }
   // End of ECP sequence
