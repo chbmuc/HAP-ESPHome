@@ -79,7 +79,7 @@ bool PN532Uart::read_response(uint8_t command, std::vector<uint8_t> &data) {
 #endif
   ESP_LOGV(TAG, "Header data: %s", format_hex_pretty_to(hex_buf, sizeof(hex_buf), header.data(), header.size()));
 
-  if (header[0] != 0x00 && header[1] != 0x00 && header[2] != 0xFF) {
+  if (header[0] != 0x00 || header[1] != 0x00 || header[2] != 0xFF) {
     // invalid packet
     ESP_LOGV(TAG, "read data invalid preamble!");
     return false;
