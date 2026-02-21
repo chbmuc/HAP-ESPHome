@@ -143,38 +143,39 @@ void PN532::update() {
     obj->on_scan_end();
 
   // Enhanced Contactless Polling sequence
-  if (this->ecp_frame.size() > 0) {
+  if (this->ecp_frame.size() > 0 && this->next_flow_ == 0) {
     // Drain any stale data left in the RX buffer (e.g. from HomeKey
     // inDataExchange calls) to prevent ACK misreads.
     this->flush_rx_();
 
-    if (this->next_flow_ == 0) {
-      if (!this->write_command_({
-              PN532_COMMAND_WRITEREGISTER,
-              (0x633d >> 8) & 0xFF,
-              0x633d & 0xFF,
-              0x0
-        })) {
-        ESP_LOGW(TAG, "Setting 8bit TX failed!");
-        this->status_set_warning();
-        return;
-      }
-      this->status_clear_warning();
-      this->requested_ecp_ = true;
+    // Set 8-bit TX mode synchronously (fast, ~20ms response)
+    if (!this->write_command_({
+            PN532_COMMAND_WRITEREGISTER,
+            (0x633d >> 8) & 0xFF,
+            0x633d & 0xFF,
+            0x0
+      })) {
+      ESP_LOGW(TAG, "Setting 8bit TX failed!");
+      this->status_set_warning();
       return;
     }
-    else if (this->next_flow_ == 1) {
-      std::vector<uint8_t> frame_send{ PN532_COMMAND_INCOMMUNICATETHRU };
-      frame_send.insert(frame_send.end(), ecp_frame.begin(), ecp_frame.end());
-      if (!this->write_command_(frame_send)) {
-        ESP_LOGW(TAG, "Sending ECP Frame failed!");
-        this->status_set_warning();
-        return;
-      }
-      this->status_clear_warning();
-      this->requested_ecp_ = true;
+    std::vector<uint8_t> wr_response;
+    if (!this->read_response(PN532_COMMAND_WRITEREGISTER, wr_response)) {
+      ESP_LOGW(TAG, "Setting 8bit TX response failed!");
       return;
     }
+
+    // Send ECP frame (response handled asynchronously in loop())
+    std::vector<uint8_t> frame_send{ PN532_COMMAND_INCOMMUNICATETHRU };
+    frame_send.insert(frame_send.end(), ecp_frame.begin(), ecp_frame.end());
+    if (!this->write_command_(frame_send)) {
+      ESP_LOGW(TAG, "Sending ECP Frame failed!");
+      this->status_set_warning();
+      return;
+    }
+    this->status_clear_warning();
+    this->requested_ecp_ = true;
+    return;
   }
   // End of ECP sequence
 
@@ -192,37 +193,17 @@ void PN532::update() {
 }
 
 void PN532::loop() {
-  // Enhanced Contactless Polling sequence
+  // Enhanced Contactless Polling sequence - read InCommunicateThru response
   if (this->next_flow_ == 0 && this->requested_ecp_) {
     auto ready = this->read_ready_(false);
     if (ready == WOULDBLOCK)
       return;
 
-    bool success = false;
-    std::vector<uint8_t> read;
-
     if (ready == READY) {
-      success = this->read_response(PN532_COMMAND_WRITEREGISTER, read);
+      std::vector<uint8_t> read;
+      this->read_response(PN532_COMMAND_INCOMMUNICATETHRU, read);
       ESP_LOGV(TAG, "ECP: %s", format_hex(read).c_str());
       this->next_flow_ = 1;
-    }
-    else {
-      this->send_ack_();
-    }
-    this->requested_ecp_ = false;
-    return;
-  } else if (this->next_flow_ == 1 && this->requested_ecp_) {
-    auto ready = this->read_ready_(false);
-    if (ready == WOULDBLOCK)
-      return;
-
-    bool success = false;
-    std::vector<uint8_t> read;
-
-    if (ready == READY) {
-      success = this->read_response(PN532_COMMAND_INCOMMUNICATETHRU, read);
-      ESP_LOGV(TAG, "ECP: %s", format_hex(read).c_str());
-      this->next_flow_ = 2;
     }
     else {
       this->send_ack_();
