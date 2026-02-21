@@ -14,6 +14,7 @@
 #include <esphome/components/pn532/pn532.h>
 #include <esphome/core/base_automation.h>
 #include "automation.h"
+#include <freertos/semphr.h>
 #endif
 
 namespace esphome
@@ -44,6 +45,11 @@ namespace esphome
       };
       std::vector<HKAuthTrigger *> triggers_onhk_;
       std::vector<HKFailTrigger *> triggers_onhk_fail_;
+      static std::function<bool(uint8_t*, uint8_t, uint8_t*, uint16_t*, bool)> nfc_lambda_;
+      static std::unique_ptr<HKAuthenticationContext> cached_auth_ctx_;
+      static SemaphoreHandle_t auth_ctx_mutex_;
+      static TaskHandle_t precompute_task_handle_;
+      static void precompute_auth_ctx_task_(void* arg);
       static int nfcAccess_write(hap_write_data_t write_data[], int count, void* serv_priv, void* write_priv);
       static void hap_event_handler(hap_event_t event, void* data);
       #endif

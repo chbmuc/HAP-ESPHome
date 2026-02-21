@@ -8,6 +8,24 @@ namespace homekit {
 readerData_t LockEntity::readerData;
 nvs_handle LockEntity::savedHKdata;
 pn532::PN532 *LockEntity::nfc_ctx;
+
+std::function<bool(uint8_t *, uint8_t, uint8_t *, uint16_t *, bool)> LockEntity::nfc_lambda_;
+std::unique_ptr<HKAuthenticationContext> LockEntity::cached_auth_ctx_;
+SemaphoreHandle_t LockEntity::auth_ctx_mutex_ = nullptr;
+TaskHandle_t LockEntity::precompute_task_handle_ = nullptr;
+
+void LockEntity::precompute_auth_ctx_task_(void *arg) {
+  for (;;) {
+    auto ctx = std::make_unique<HKAuthenticationContext>(nfc_lambda_, readerData, savedHKdata);
+
+    xSemaphoreTake(auth_ctx_mutex_, portMAX_DELAY);
+    cached_auth_ctx_ = std::move(ctx);
+    xSemaphoreGive(auth_ctx_mutex_);
+
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+}
+
 int LockEntity::nfcAccess_write(hap_write_data_t write_data[], int count,
                                 void *serv_priv, void *write_priv) {
   LockEntity *parent = (LockEntity *)serv_priv;
@@ -304,23 +322,28 @@ void LockEntity::set_hk_hw_finish(HKFinish color) {
 void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
   ctx->set_ecp_frame(ecpData);
   nfc_ctx = ctx;
+
+  nfc_lambda_ = [ctx](uint8_t *send, uint8_t sendLen, uint8_t *res,
+                       uint16_t *resLen, bool ignoreLog) -> bool {
+    auto data =
+        ctx->inDataExchange(std::vector<uint8_t>(send, send + sendLen));
+    data.erase(data.begin());
+    ESP_LOGD("LockEntity", "%s", format_hex_pretty(data).c_str());
+    memcpy(res, data.data(), data.size());
+    uint16_t t = data.size();
+    memcpy(resLen, &t, sizeof(uint16_t));
+    return true;
+  };
+
+  auth_ctx_mutex_ = xSemaphoreCreateMutex();
+  xTaskCreate(precompute_auth_ctx_task_, "hk_precomp", 8192, nullptr, 3,
+              &precompute_task_handle_);
+
   auto trigger = new nfc::NfcOnTagTrigger();
   ctx->register_ontag_trigger(trigger);
   auto automation_id_3 = new Automation<std::string, nfc::NfcTag>(trigger);
   auto lambdaaction_id_3 = new LambdaAction<std::string, nfc::NfcTag>(
       [this, ctx](std::string x, nfc::NfcTag tag) -> void {
-        std::function<bool(uint8_t *, uint8_t, uint8_t *, uint16_t *, bool)>
-            lambda = [=](uint8_t *send, uint8_t sendLen, uint8_t *res,
-                         uint16_t *resLen, bool ignoreLog) -> bool {
-          auto data =
-              ctx->inDataExchange(std::vector<uint8_t>(send, send + sendLen));
-          data.erase(data.begin());
-          ESP_LOGD(TAG, "%s", format_hex_pretty(data).c_str());
-          memcpy(res, data.data(), data.size());
-          uint16_t t = data.size();
-          memcpy(resLen, &t, sizeof(uint16_t));
-          return true;
-        };
         auto versions =
             ctx->inDataExchange({0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00,
                                  0x08, 0x58, 0x01, 0x01, 0x0});
@@ -329,8 +352,23 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
                    format_hex_pretty(versions).c_str());
           if (versions.data()[versions.size() - 2] == 0x90 &&
               versions.data()[versions.size() - 1] == 0x0) {
-            HKAuthenticationContext authCtx(lambda, readerData, savedHKdata);
-            auto authResult = authCtx.authenticate(KeyFlow(kFlowFAST));
+
+            std::unique_ptr<HKAuthenticationContext> authCtx;
+            if (xSemaphoreTake(auth_ctx_mutex_, 0) == pdTRUE) {
+              authCtx = std::move(cached_auth_ctx_);
+              xSemaphoreGive(auth_ctx_mutex_);
+            }
+            if (!authCtx) {
+              ESP_LOGI(TAG, "Auth context cache miss, generating...");
+              authCtx.reset(new HKAuthenticationContext(nfc_lambda_, readerData, savedHKdata));
+            }
+
+            auto authResult = authCtx->authenticate(KeyFlow(kFlowFAST));
+
+            if (precompute_task_handle_) {
+              xTaskNotifyGive(precompute_task_handle_);
+            }
+
             if (std::get<0>(authResult).size() > 0 &&
                 std::get<2>(authResult) != kFlowFailed) {
               for (auto &&t : triggers_onhk_) {
@@ -350,6 +388,9 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
           }
         } else {
           ESP_LOGW(TAG, "Target probably not Homekey");
+        }
+        if (precompute_task_handle_) {
+          xTaskNotifyGive(precompute_task_handle_);
         }
       });
   automation_id_3->add_actions({lambdaaction_id_3});
