@@ -135,6 +135,10 @@ void PN532::update() {
   if (!updates_enabled_)
     return;
 
+  // Don't send a new command while still waiting for a response
+  if (this->requested_ecp_ || this->requested_read_)
+    return;
+
   for (auto *obj : this->binary_sensors_)
     obj->on_scan_end();
 
