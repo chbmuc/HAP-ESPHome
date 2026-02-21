@@ -314,7 +314,15 @@ void PN532::loop() {
   this->current_uid_ = nfcid;
 
   if (next_task_ == READ) {
-    auto tag = this->read_tag_(nfcid);
+    std::unique_ptr<nfc::NfcTag> tag;
+    if (this->ecp_frame.size() > 0) {
+      // ECP/HomeKey mode: skip Mifare Classic read attempts which would
+      // corrupt the ISO-DEP session needed for HomeKey authentication.
+      // HomeKey uses inDataExchange() directly and doesn't need NDEF data.
+      tag = make_unique<nfc::NfcTag>(nfcid);
+    } else {
+      tag = this->read_tag_(nfcid);
+    }
     for (auto *trigger : this->triggers_ontag_)
       trigger->process(tag);
 
