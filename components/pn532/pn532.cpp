@@ -389,7 +389,7 @@ std::vector<uint8_t> PN532::inDataExchange(const std::vector<uint8_t>& data) {
   }
   uint32_t start = millis();
   while (this->read_ready_(true) != pn532::PN532ReadReady::READY) {
-    if (millis() - start > 1000) {
+    if (millis() - start > 3000) {
       ESP_LOGW(TAG, "Timed out waiting for InDataExchange response");
       return std::vector<uint8_t>();
     }
