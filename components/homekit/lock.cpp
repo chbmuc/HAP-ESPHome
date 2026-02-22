@@ -327,6 +327,15 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
                        uint16_t *resLen, bool ignoreLog) -> bool {
     auto data =
         ctx->inDataExchange(std::vector<uint8_t>(send, send + sendLen));
+    if (data.empty()) {
+      ESP_LOGW("LockEntity", "inDataExchange returned empty response");
+      return false;
+    }
+    uint8_t status = data[0];
+    if (status != 0x00) {
+      ESP_LOGW("LockEntity", "inDataExchange error status: 0x%02X", status);
+      return false;
+    }
     data.erase(data.begin());
     ESP_LOGD("LockEntity", "%s", format_hex_pretty(data).c_str());
     memcpy(res, data.data(), data.size());
