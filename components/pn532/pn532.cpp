@@ -369,7 +369,12 @@ void PN532::loop() {
 
   this->read_mode();
 
-  if(!keep_rf_on_) {
+  if (this->ecp_frame.size() > 0) {
+    // In ECP/HomeKey mode, always cycle RF to reset any stale ISO-DEP
+    // state from a failed or completed authentication. The next ECP
+    // cycle will re-enable the RF field.
+    this->turn_off_rf_();
+  } else if (!keep_rf_on_) {
     this->turn_off_rf_();
   }
 
