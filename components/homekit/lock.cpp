@@ -351,47 +351,54 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
         auto versions =
             ctx->inDataExchange({0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00,
                                  0x08, 0x58, 0x01, 0x01, 0x0});
-        if (versions.size() > 0) {
+        // Response format: [PN532_status] [APDU_data...] [SW1] [SW2]
+        // PN532 status: 0x00=success, 0x01=timeout, 0x0B=RF error
+        if (versions.empty()) {
+          ESP_LOGW(TAG, "Target probably not Homekey");
+        } else if (versions[0] != 0x00) {
+          ESP_LOGW(TAG, "SELECT failed, PN532 status: 0x%02X", versions[0]);
+          for (auto &&t : triggers_onhk_fail_) {
+            t->process();
+          }
+        } else if (versions.size() < 3 ||
+                   versions[versions.size() - 2] != 0x90 ||
+                   versions[versions.size() - 1] != 0x00) {
+          ESP_LOGE(TAG, "Invalid response for HK: %s",
+                   format_hex_pretty(versions).c_str());
+          for (auto &&t : triggers_onhk_fail_) {
+            t->process();
+          }
+        } else {
           ESP_LOGD(TAG, "HK SUPPORTED VERSIONS: %s",
                    format_hex_pretty(versions).c_str());
-          if (versions.data()[versions.size() - 2] == 0x90 &&
-              versions.data()[versions.size() - 1] == 0x0) {
 
-            std::unique_ptr<HKAuthenticationContext> authCtx;
-            if (xSemaphoreTake(auth_ctx_mutex_, 0) == pdTRUE) {
-              authCtx = std::move(cached_auth_ctx_);
-              xSemaphoreGive(auth_ctx_mutex_);
-            }
-            if (!authCtx) {
-              ESP_LOGI(TAG, "Auth context cache miss, generating...");
-              authCtx.reset(new HKAuthenticationContext(nfc_lambda_, readerData, savedHKdata));
-            }
+          std::unique_ptr<HKAuthenticationContext> authCtx;
+          if (xSemaphoreTake(auth_ctx_mutex_, 0) == pdTRUE) {
+            authCtx = std::move(cached_auth_ctx_);
+            xSemaphoreGive(auth_ctx_mutex_);
+          }
+          if (!authCtx) {
+            ESP_LOGI(TAG, "Auth context cache miss, generating...");
+            authCtx.reset(new HKAuthenticationContext(nfc_lambda_, readerData, savedHKdata));
+          }
 
-            auto authResult = authCtx->authenticate(KeyFlow(kFlowFAST));
+          auto authResult = authCtx->authenticate(KeyFlow(kFlowFAST));
 
-            if (precompute_task_handle_) {
-              xTaskNotifyGive(precompute_task_handle_);
-            }
+          if (precompute_task_handle_) {
+            xTaskNotifyGive(precompute_task_handle_);
+          }
 
-            if (std::get<0>(authResult).size() > 0 &&
-                std::get<2>(authResult) != kFlowFailed) {
-              for (auto &&t : triggers_onhk_) {
-                t->process(hex_representation(std::get<0>(authResult)),
-                           hex_representation(std::get<1>(authResult)));
-              }
-            } else {
-              for (auto &&t : triggers_onhk_fail_) {
-                t->process();
-              }
+          if (std::get<0>(authResult).size() > 0 &&
+              std::get<2>(authResult) != kFlowFailed) {
+            for (auto &&t : triggers_onhk_) {
+              t->process(hex_representation(std::get<0>(authResult)),
+                         hex_representation(std::get<1>(authResult)));
             }
           } else {
             for (auto &&t : triggers_onhk_fail_) {
               t->process();
             }
-            ESP_LOGE(TAG, "Invalid response for HK");
           }
-        } else {
-          ESP_LOGW(TAG, "Target probably not Homekey");
         }
         if (precompute_task_handle_) {
           xTaskNotifyGive(precompute_task_handle_);
