@@ -166,6 +166,24 @@ bool PN532Spi::read_response(uint8_t command, std::vector<uint8_t> &data) {
   return true;
 }
 
+void PN532Spi::flush_rx_() {
+  // After HomeKey authentication (multiple inDataExchange calls), stale
+  // response data may remain in the PN532's SPI output buffer.  If not
+  // drained, the next write_command_ ACK read can misparse this leftover
+  // data, causing the ECP frame transmission to fail silently.
+  // Read and discard any pending data frames.
+  while (this->is_read_ready()) {
+    this->enable();
+    delay(2);
+    this->write_byte(0x03);  // SPI data read command
+    // Read and discard up to 32 bytes (max PN532 normal frame length)
+    for (int i = 0; i < 32; i++) {
+      this->read_byte();
+    }
+    this->disable();
+  }
+}
+
 void PN532Spi::dump_config() {
   PN532::dump_config();
   LOG_PIN("  CS Pin: ", this->cs_);
