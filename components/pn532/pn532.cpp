@@ -80,13 +80,21 @@ void PN532::setup() {
     return;
   }
 
-  // Set up Passive Activation Tries to 0
+  // Set up MaxRetries: MxRtyATR=0xFF, MxRtyPSL=0x01, MxRtyPassiveActivation
+  // MxRtyPassiveActivation=0x00 means InListPassiveTarget sends exactly
+  // 1 REQA with no retries.  This achieves the spec-required 1:1 ratio
+  // of REQA to ECP frames (A → ECP_A → A → ECP_A).  Higher values
+  // (e.g. 0x02 = 3 REQAs) cause the iPhone to activate and commit to
+  // Apple Pay routing before it ever sees the ECP HomeKey frame.
+  // The tight ECP polling loop in loop() already gives the phone many
+  // rapid REQA→ECP cycles per second, so a single REQA per
+  // InListPassiveTarget is sufficient for activation.
   if (!this->write_command_({
           PN532_COMMAND_RFCONFIGURATION,
           0x05,
           0xFF,
           0x01,
-          0x0
+          0x00
     })) {
     this->error_code_ = WAKEUP_FAILED;
     this->mark_failed();
@@ -135,46 +143,40 @@ void PN532::update() {
   if (!updates_enabled_)
     return;
 
-  // Don't send a new command while still waiting for a response
-  if (this->requested_ecp_ || this->requested_read_)
+  // Don't send a new command while still waiting for a response.
+  // Signal the ECP inner loop in loop() to yield on the next no-tag cycle
+  // so that on_scan_end() can run.
+  if (this->requested_ecp_ || this->requested_read_) {
+    this->pending_update_ = true;
     return;
+  }
 
   for (auto *obj : this->binary_sensors_)
     obj->on_scan_end();
 
-  // Enhanced Contactless Polling sequence
+  // Enhanced Contactless Polling: start each cycle with REQA first.
+  // Per the ECP spec, the iPhone expects the polling pattern A → ECP_A
+  // (REQA before ECP frame).  The tight inner loop in loop() then
+  // alternates ECP → REQA → ECP → REQA until a tag responds or update()
+  // signals a break via pending_update_.
   if (this->ecp_frame.size() > 0 && this->next_flow_ == 0) {
     // Drain any stale data left in the RX buffer (e.g. from HomeKey
     // inDataExchange calls) to prevent ACK misreads.
     this->flush_rx_();
+    this->pending_update_ = false;
 
-    // Set 8-bit TX mode synchronously (fast, ~20ms response)
     if (!this->write_command_({
-            PN532_COMMAND_WRITEREGISTER,
-            (0x633d >> 8) & 0xFF,
-            0x633d & 0xFF,
-            0x0
-      })) {
-      ESP_LOGW(TAG, "Setting 8bit TX failed!");
-      this->status_set_warning();
-      return;
-    }
-    std::vector<uint8_t> wr_response;
-    if (!this->read_response(PN532_COMMAND_WRITEREGISTER, wr_response)) {
-      ESP_LOGW(TAG, "Setting 8bit TX response failed!");
-      return;
-    }
-
-    // Send ECP frame (response handled asynchronously in loop())
-    std::vector<uint8_t> frame_send{ PN532_COMMAND_INCOMMUNICATETHRU };
-    frame_send.insert(frame_send.end(), ecp_frame.begin(), ecp_frame.end());
-    if (!this->write_command_(frame_send)) {
-      ESP_LOGW(TAG, "Sending ECP Frame failed!");
+            PN532_COMMAND_INLISTPASSIVETARGET,
+            0x01,  // max 1 card
+            0x00,  // baud rate ISO14443A (106 kbit/s)
+        })) {
+      ESP_LOGW(TAG, "Requesting tag read failed!");
       this->status_set_warning();
       return;
     }
     this->status_clear_warning();
-    this->requested_ecp_ = true;
+    this->requested_read_ = true;
+    this->next_flow_ = 1;
     return;
   }
   // End of ECP sequence
@@ -193,42 +195,41 @@ void PN532::update() {
 }
 
 void PN532::loop() {
-  // Enhanced Contactless Polling sequence - read InCommunicateThru response
-  if (this->next_flow_ == 0 && this->requested_ecp_) {
+  // === ECP State 2: Read ECP response, then immediately send REQA ===
+  // This completes the spec-conformant pattern: A → ECP_A → A → ECP_A
+  if (this->next_flow_ == 2 && this->requested_ecp_) {
     auto ready = this->read_ready_(false);
     if (ready == WOULDBLOCK)
       return;
 
+    // ECP is a broadcast — no card responds, so a timeout error is expected.
     if (ready == READY) {
       std::vector<uint8_t> read;
       this->read_response(PN532_COMMAND_INCOMMUNICATETHRU, read);
       ESP_LOGV(TAG, "ECP: %s", format_hex(read).c_str());
-      this->next_flow_ = 1;
-    }
-    else {
+    } else {
       this->send_ack_();
     }
     this->requested_ecp_ = false;
 
-    // Send InListPassiveTarget immediately after ECP, don't wait for next
-    // update() call. The iPhone activates NFC upon receiving ECP and expects
-    // REQA quickly — waiting a full polling interval risks session timeout.
-    if (this->next_flow_ == 1) {
-      if (!this->write_command_({
-              PN532_COMMAND_INLISTPASSIVETARGET,
-              0x01,  // max 1 card
-              0x00,  // baud rate ISO14443A (106 kbit/s)
-          })) {
-        ESP_LOGW(TAG, "Requesting tag read failed!");
-        this->status_set_warning();
-        return;
-      }
-      this->status_clear_warning();
-      this->requested_read_ = true;
+    // Immediately send REQA after ECP (the next "A" in A → ECP_A → A)
+    if (!this->write_command_({
+            PN532_COMMAND_INLISTPASSIVETARGET,
+            0x01,  // max 1 card
+            0x00,  // baud rate ISO14443A (106 kbit/s)
+        })) {
+      ESP_LOGW(TAG, "Requesting tag read failed!");
+      this->status_set_warning();
+      this->next_flow_ = 0;
+      return;
     }
+    this->status_clear_warning();
+    this->requested_read_ = true;
+    this->next_flow_ = 1;
     return;
   }
-  // End of ECP sequence
+
+  // === Read InListPassiveTarget response (ECP State 1 or non-ECP) ===
   if (!this->requested_read_)
     return;
 
@@ -255,6 +256,12 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
+    // In ECP mode, continue the tight polling loop by sending the next
+    // ECP frame, unless update() signalled a break via pending_update_.
+    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0 && !this->pending_update_) {
+      this->ecp_send_frame_();
+      return;
+    }
     if(!keep_rf_on_) {
       this->turn_off_rf_();
     }
@@ -272,6 +279,12 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
+    // In ECP mode, continue the tight polling loop by sending the next
+    // ECP frame, unless update() signalled a break via pending_update_.
+    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0 && !this->pending_update_) {
+      this->ecp_send_frame_();
+      return;
+    }
     if(!keep_rf_on_) {
       this->turn_off_rf_();
     }
@@ -513,6 +526,37 @@ enum PN532ReadReady PN532::read_ready_(bool block) {
     this->rd_ready_ = WOULDBLOCK;
   }
   return rdy;
+}
+
+void PN532::ecp_send_frame_() {
+  // Set 8-bit TX mode synchronously (fast, ~5ms response)
+  if (!this->write_command_({
+          PN532_COMMAND_WRITEREGISTER,
+          (0x633d >> 8) & 0xFF,
+          0x633d & 0xFF,
+          0x0
+    })) {
+    ESP_LOGW(TAG, "Setting 8bit TX failed!");
+    this->next_flow_ = 0;
+    return;
+  }
+  std::vector<uint8_t> wr_response;
+  if (!this->read_response(PN532_COMMAND_WRITEREGISTER, wr_response)) {
+    ESP_LOGW(TAG, "Setting 8bit TX response failed!");
+    this->next_flow_ = 0;
+    return;
+  }
+
+  // Send ECP frame (response handled asynchronously in loop() State 2)
+  std::vector<uint8_t> frame_send{ PN532_COMMAND_INCOMMUNICATETHRU };
+  frame_send.insert(frame_send.end(), ecp_frame.begin(), ecp_frame.end());
+  if (!this->write_command_(frame_send)) {
+    ESP_LOGW(TAG, "Sending ECP Frame failed!");
+    this->next_flow_ = 0;
+    return;
+  }
+  this->requested_ecp_ = true;
+  this->next_flow_ = 2;
 }
 
 void PN532::turn_off_rf_() {
