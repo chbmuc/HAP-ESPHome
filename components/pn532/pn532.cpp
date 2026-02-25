@@ -144,8 +144,9 @@ void PN532::update() {
     return;
 
   // Don't send a new command while still waiting for a response.
-  // Signal the ECP inner loop in loop() to yield on the next no-tag cycle
-  // so that on_scan_end() can run.
+  // In ECP mode the tight loop in loop() runs continuously without
+  // breaking — it will naturally reset next_flow_ to 0 when a tag is
+  // found or after RF-off, at which point update() proceeds normally.
   if (this->requested_ecp_ || this->requested_read_) {
     this->pending_update_ = true;
     return;
@@ -157,8 +158,10 @@ void PN532::update() {
   // Enhanced Contactless Polling: start each cycle with REQA first.
   // Per the ECP spec, the iPhone expects the polling pattern A → ECP_A
   // (REQA before ECP frame).  The tight inner loop in loop() then
-  // alternates ECP → REQA → ECP → REQA until a tag responds or update()
-  // signals a break via pending_update_.
+  // alternates ECP → REQA → ECP → REQA continuously until a tag
+  // responds.  Combined with MxRtyPassiveActivation=0x00 (single REQA
+  // per InListPassiveTarget), this achieves a strict 1:1 REQA-to-ECP
+  // ratio that prevents the iPhone from activating into Apple Pay.
   if (this->ecp_frame.size() > 0 && this->next_flow_ == 0) {
     // Drain any stale data left in the RX buffer (e.g. from HomeKey
     // inDataExchange calls) to prevent ACK misreads.
@@ -256,9 +259,13 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
-    // In ECP mode, continue the tight polling loop by sending the next
-    // ECP frame, unless update() signalled a break via pending_update_.
-    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0 && !this->pending_update_) {
+    // In ECP mode, always continue the tight polling loop by sending
+    // the next ECP frame.  Never break for pending_update_ — the gap
+    // leaves the RF field on without ECP frames, which causes the
+    // iPhone to activate into Apple Pay instead of HomeKey.
+    // on_scan_end() for binary sensors will run when a tag is actually
+    // found (next_flow_ resets to 0) or when ECP mode is not active.
+    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0) {
       this->ecp_send_frame_();
       return;
     }
@@ -279,9 +286,8 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
-    // In ECP mode, continue the tight polling loop by sending the next
-    // ECP frame, unless update() signalled a break via pending_update_.
-    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0 && !this->pending_update_) {
+    // In ECP mode, always continue the tight polling loop (see above).
+    if (this->next_flow_ == 1 && this->ecp_frame.size() > 0) {
       this->ecp_send_frame_();
       return;
     }
