@@ -61,31 +61,31 @@ namespace esphome
       void setup() {
         hap_serv_t* service = nullptr;
 
-        std::string device_class = sensorPtr->get_device_class();
-        if (std::equal(device_class.begin(), device_class.end(), strdup("temperature"))) {
+        const std::string &device_class = sensorPtr->get_device_class_ref();
+        if (device_class == "temperature") {
           service = hap_serv_temperature_sensor_create(sensorPtr->state);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("humidity"))) {
+        else if (device_class == "humidity") {
           service = hap_serv_humidity_sensor_create(sensorPtr->state);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("illuminance"))) {
+        else if (device_class == "illuminance") {
           service = hap_serv_light_sensor_create(sensorPtr->state);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("aqi"))) {
+        else if (device_class == "aqi") {
           service = hap_serv_air_quality_sensor_create(sensorPtr->state);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("carbon_dioxide"))) {
+        else if (device_class == "carbon_dioxide") {
           service = hap_serv_carbon_dioxide_sensor_create(false);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("carbon_monoxide"))) {
+        else if (device_class == "carbon_monoxide") {
           service = hap_serv_carbon_monoxide_sensor_create(false);
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("pm10"))) {
-          service = hap_serv_create(HAP_SERV_UUID_AIR_QUALITY_SENSOR);
+        else if (device_class == "pm10") {
+          service = hap_serv_create(const_cast<char *>(HAP_SERV_UUID_AIR_QUALITY_SENSOR));
           hap_serv_add_char(service, hap_char_pm_10_density_create(sensorPtr->state));
         }
-        else if (std::equal(device_class.begin(), device_class.end(), strdup("pm25"))) {
-          service = hap_serv_create(HAP_SERV_UUID_AIR_QUALITY_SENSOR);
+        else if (device_class == "pm25") {
+          service = hap_serv_create(const_cast<char *>(HAP_SERV_UUID_AIR_QUALITY_SENSOR));
           hap_serv_add_char(service, hap_char_pm_2_5_density_create(sensorPtr->state));
         }
         if (service) {
