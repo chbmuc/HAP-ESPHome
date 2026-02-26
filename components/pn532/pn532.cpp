@@ -112,9 +112,7 @@ void PN532::setup() {
     return;
   }
 
-  if(!keep_rf_on_) {
-    this->turn_off_rf_();
-  }
+  this->turn_off_rf_();
 }
 
 bool PN532::powerdown() {
@@ -259,6 +257,7 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
+
     // In ECP mode, always continue the tight polling loop by sending
     // the next ECP frame.  Never break for pending_update_ — the gap
     // leaves the RF field on without ECP frames, which causes the
@@ -269,9 +268,8 @@ void PN532::loop() {
       this->ecp_send_frame_();
       return;
     }
-    if(!keep_rf_on_) {
-      this->turn_off_rf_();
-    }
+
+    this->turn_off_rf_();
     this->next_flow_ = 0;
     return;
   }
@@ -286,14 +284,13 @@ void PN532::loop() {
         trigger->process(tag);
     }
     this->current_uid_ = {};
+
     // In ECP mode, always continue the tight polling loop (see above).
     if (this->next_flow_ == 1 && this->ecp_frame.size() > 0) {
       this->ecp_send_frame_();
       return;
     }
-    if(!keep_rf_on_) {
-      this->turn_off_rf_();
-    }
+    this->turn_off_rf_();
     this->next_flow_ = 0;
     return;
   } else {
@@ -388,15 +385,7 @@ void PN532::loop() {
 
   this->read_mode();
 
-  if (this->ecp_frame.size() > 0) {
-    // In ECP/HomeKey mode, always cycle RF to reset any stale ISO-DEP
-    // state from a failed or completed authentication. The next ECP
-    // cycle will re-enable the RF field.
-    this->turn_off_rf_();
-  } else if (!keep_rf_on_) {
-    this->turn_off_rf_();
-  }
-
+  this->turn_off_rf_();
   this->next_flow_ = 0;
 }
 

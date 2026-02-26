@@ -56,7 +56,7 @@ Project is divided into two different components, `homekit_base` which handles t
 
 This repository also includes the `pn532` and `pn532_spi` components which are just slightly modified versions of the official ones from the ESPHome repository to suit HomeKey needs with no extra options added to them nor deleted, however, it's not guaranteed to be kept up to date with upstream changes.
 
-There is also a `pn532_uart` component that can be used when the PN532 module needs to be connected via the HSU interface. However it is recomended to use the SPI interface whenever posible, as it is more reliable.
+There is also a `pn532_uart` component that can be used when the PN532 module needs to be connected via the HSU interface.
 
 > [!TIP]
 > For configuration examples, you can see the `.yaml` files in this repository, e.g. [lights-c3.yaml](lights-c3.yaml)
@@ -243,7 +243,6 @@ This is what handles the accessory logic like syncing states between HomeKit and
 
 > [!NOTE]
 > For quick reactions and to avoid issues, don't raise the `update_interval` over 500ms
-> Esphome is turning of the RF side of the PN532 module whenever posible to avoid wifi interference. However this is causing problems with Homekey. You have to set the `keep_rf_on` option for reliable Homekey communication.
 
 Example configuration for the SPI inteface:
 
@@ -257,7 +256,6 @@ pn532_spi:
   id: nfc_spi_module
   cs_pin: 7
   update_interval: 100ms
-  keep_rf_on: true
 
 homekit:
   lock:
@@ -277,7 +275,6 @@ pn532_spi:
   id: nfc_uart_module
   uart_id: uart_nfc
   update_interval: 100ms
-  keep_rf_on: true
 
 homekit:
   lock:
