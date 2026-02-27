@@ -385,8 +385,21 @@ void PN532::loop() {
 
   this->read_mode();
 
-  this->turn_off_rf_();
-  this->next_flow_ = 0;
+  if (this->ecp_frame.size() > 0) {
+    // In ECP/HomeKey mode, do NOT turn off the RF field immediately.
+    // The iPhone needs the NFC session to stay alive briefly after
+    // CONTROL FLOW success to commit the checkmark animation.  If RF
+    // drops too soon, the phone shows an error despite successful auth.
+    // The target_still_present guard (set above) prevents re-processing
+    // while the phone remains in the field.  When it moves away,
+    // InListPassiveTarget returns no target and normal ECP polling
+    // resumes.  Stale ISO-DEP state is cleaned up by flush_rx_() at
+    // the start of the next ECP cycle in update().
+    this->next_flow_ = 0;
+  } else {
+    this->turn_off_rf_();
+    this->next_flow_ = 0;
+  }
 }
 
 std::vector<uint8_t> PN532::inDataExchange(const std::vector<uint8_t>& data) {
