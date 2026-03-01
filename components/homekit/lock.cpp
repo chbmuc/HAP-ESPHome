@@ -158,21 +158,37 @@ void LockEntity::on_lock_update(lock::Lock *obj) {
       hap_serv_get_char_by_uuid(hs, HAP_CHAR_UUID_LOCK_CURRENT_STATE);
   hap_char_t *target_state =
       hap_serv_get_char_by_uuid(hs, HAP_CHAR_UUID_LOCK_TARGET_STATE);
+  // HAP Lock Current State: 0=Unsecured, 1=Secured, 2=Jammed, 3=Unknown
+  // HAP Lock Target State:  0=Unsecured, 1=Secured
   hap_val_t c;
   hap_val_t t;
-  if (obj->state == lock::LockState::LOCK_STATE_LOCKED ||
-      obj->state == lock::LockState::LOCK_STATE_UNLOCKED) {
-    c.i = obj->state % 2;
-    t.i = obj->state % 2;
-    hap_char_update_val(current_state, &c);
-    hap_char_update_val(target_state, &t);
-  } else if (obj->state == lock::LockState::LOCK_STATE_LOCKING ||
-             obj->state == lock::LockState::LOCK_STATE_UNLOCKING) {
-    t.i = (obj->state % 5) % 3;
-    hap_char_update_val(target_state, &t);
-  } else if (obj->state == lock::LockState::LOCK_STATE_JAMMED) {
-    c.i = obj->state;
-    hap_char_update_val(current_state, &c);
+  switch (obj->state) {
+    case lock::LOCK_STATE_LOCKED:
+      c.i = 1;  // Secured
+      t.i = 1;  // Secured
+      hap_char_update_val(current_state, &c);
+      hap_char_update_val(target_state, &t);
+      break;
+    case lock::LOCK_STATE_UNLOCKED:
+      c.i = 0;  // Unsecured
+      t.i = 0;  // Unsecured
+      hap_char_update_val(current_state, &c);
+      hap_char_update_val(target_state, &t);
+      break;
+    case lock::LOCK_STATE_LOCKING:
+      t.i = 1;  // Secured
+      hap_char_update_val(target_state, &t);
+      break;
+    case lock::LOCK_STATE_UNLOCKING:
+      t.i = 0;  // Unsecured
+      hap_char_update_val(target_state, &t);
+      break;
+    case lock::LOCK_STATE_JAMMED:
+      c.i = 2;  // Jammed
+      hap_char_update_val(current_state, &c);
+      break;
+    default:
+      break;
   }
   return;
 }
