@@ -432,6 +432,7 @@ std::vector<uint8_t> PN532::inDataExchange(const std::vector<uint8_t>& data) {
 
 bool PN532::write_command_(const std::vector<uint8_t>& data) {
   std::vector<uint8_t> write_data;
+  write_data.reserve(data.size() + 10);
   // Preamble
   write_data.push_back(0x00);
 
