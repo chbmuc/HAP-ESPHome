@@ -413,12 +413,10 @@ std::vector<uint8_t> PN532::inDataExchange(const std::vector<uint8_t>& data) {
       return std::vector<uint8_t>();
     }
   }
-  uint32_t start = millis();
-  while (this->read_ready_(true) != pn532::PN532ReadReady::READY) {
-    if (millis() - start > 3000) {
-      ESP_LOGW(TAG, "Timed out waiting for InDataExchange response");
-      return std::vector<uint8_t>();
-    }
+  auto ready = this->read_ready_(true, 3000);
+  if (ready != READY) {
+    ESP_LOGW(TAG, "Timed out waiting for InDataExchange response");
+    return std::vector<uint8_t>();
   }
 
   std::vector<uint8_t> buffer;
@@ -496,7 +494,7 @@ void PN532::send_nack_() {
   delay(10);
 }
 
-enum PN532ReadReady PN532::read_ready_(bool block) {
+enum PN532ReadReady PN532::read_ready_(bool block, uint32_t timeout_ms) {
   if (this->rd_ready_ == READY) {
     if (block) {
       this->rd_start_time_ = 0;
@@ -515,7 +513,7 @@ enum PN532ReadReady PN532::read_ready_(bool block) {
       break;
     }
 
-    if (millis() - this->rd_start_time_ > 100) {
+    if (millis() - this->rd_start_time_ > timeout_ms) {
       ESP_LOGV(TAG, "Timed out waiting for readiness from PN532!");
       this->rd_ready_ = TIMEOUT;
       break;
