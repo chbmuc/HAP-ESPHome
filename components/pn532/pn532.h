@@ -51,7 +51,13 @@ class PN532 : public PollingComponent {
 
   std::vector<uint8_t> inDataExchange(const std::vector<uint8_t>& data);
 
-  void set_ecp_frame(std::vector<uint8_t>& frame) { ecp_frame = frame; };
+  void set_ecp_frame(std::vector<uint8_t>& frame) {
+    ecp_frame = frame;
+    ecp_command_frame_.clear();
+    ecp_command_frame_.reserve(1 + frame.size());
+    ecp_command_frame_.push_back(PN532_COMMAND_INCOMMUNICATETHRU);
+    ecp_command_frame_.insert(ecp_command_frame_.end(), frame.begin(), frame.end());
+  };
 
   bool is_writing() { return this->next_task_ != READ; };
 
@@ -102,6 +108,7 @@ class PN532 : public PollingComponent {
   bool clean_mifare_ultralight_();
 
   std::vector<uint8_t> ecp_frame;
+  std::vector<uint8_t> ecp_command_frame_;
 
   bool updates_enabled_{ true };
   bool requested_read_{ false };

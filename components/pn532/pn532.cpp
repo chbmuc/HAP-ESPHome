@@ -557,9 +557,7 @@ void PN532::ecp_send_frame_() {
   }
 
   // Send ECP frame (response handled asynchronously in loop() State 2)
-  std::vector<uint8_t> frame_send{ PN532_COMMAND_INCOMMUNICATETHRU };
-  frame_send.insert(frame_send.end(), ecp_frame.begin(), ecp_frame.end());
-  if (!this->write_command_(frame_send)) {
+  if (!this->write_command_(this->ecp_command_frame_)) {
     ESP_LOGW(TAG, "Sending ECP Frame failed!");
     this->next_flow_ = 0;
     return;
