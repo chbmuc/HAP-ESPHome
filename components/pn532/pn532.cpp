@@ -141,6 +141,8 @@ void PN532::update() {
   if (!updates_enabled_)
     return;
 
+  this->wake_from_spd_();
+
   // Don't send a new command while still waiting for a response.
   // In ECP mode the tight loop in loop() runs continuously without
   // breaking — it will naturally reset next_flow_ to 0 when a tag is
@@ -269,7 +271,7 @@ void PN532::loop() {
       return;
     }
 
-    this->turn_off_rf_();
+    this->enter_low_power_();
     this->next_flow_ = 0;
     return;
   }
@@ -290,7 +292,7 @@ void PN532::loop() {
       this->ecp_send_frame_();
       return;
     }
-    this->turn_off_rf_();
+    this->enter_low_power_();
     this->next_flow_ = 0;
     return;
   } else {
@@ -386,18 +388,14 @@ void PN532::loop() {
   this->read_mode();
 
   if (this->ecp_frame.size() > 0) {
-    // In ECP/HomeKey mode, do NOT turn off the RF field immediately.
-    // The iPhone needs the NFC session to stay alive briefly after
-    // CONTROL FLOW success to commit the checkmark animation.  If RF
-    // drops too soon, the phone shows an error despite successful auth.
-    // The target_still_present guard (set above) prevents re-processing
-    // while the phone remains in the field.  When it moves away,
-    // InListPassiveTarget returns no target and normal ECP polling
-    // resumes.  Stale ISO-DEP state is cleaned up by flush_rx_() at
-    // the start of the next ECP cycle in update().
+    // Brief delay so the iPhone can commit the checkmark animation
+    // before the RF field drops.  Then enter SPD to save power while
+    // waiting for the phone to leave the field.
+    delay(50);
+    this->enter_low_power_();
     this->next_flow_ = 0;
   } else {
-    this->turn_off_rf_();
+    this->enter_low_power_();
     this->next_flow_ = 0;
   }
 }
@@ -562,6 +560,61 @@ void PN532::ecp_send_frame_() {
   }
   this->requested_ecp_ = true;
   this->next_flow_ = 2;
+}
+
+void PN532::enter_low_power_() {
+  if (!this->write_command_({PN532_COMMAND_POWERDOWN, 0b10110000})) {
+    ESP_LOGW(TAG, "Soft power-down command failed, falling back to RF off");
+    this->turn_off_rf_();
+    return;
+  }
+  std::vector<uint8_t> response;
+  if (!this->read_response(PN532_COMMAND_POWERDOWN, response) || response[0] != 0x00) {
+    ESP_LOGW(TAG, "Soft power-down response failed");
+    return;
+  }
+  this->in_spd_ = true;
+}
+
+void PN532::wake_from_spd_() {
+  if (!this->in_spd_)
+    return;
+  this->in_spd_ = false;
+
+  // First SPI command after SPD wakes the chip via CS assertion but is
+  // lost because the oscillator needs ~2ms to start.  The retry succeeds.
+  uint8_t sam_timeout = std::min<uint8_t>(255u, this->update_interval_ / 50);
+  std::vector<uint8_t> sam_cmd = {
+      PN532_COMMAND_SAMCONFIGURATION, 0x01, sam_timeout, 0x01};
+  if (!this->write_command_(sam_cmd)) {
+    delay(2);
+    if (!this->write_command_(sam_cmd)) {
+      ESP_LOGW(TAG, "SPD wake failed");
+      return;
+    }
+  }
+  std::vector<uint8_t> sam_result;
+  if (!this->read_response(PN532_COMMAND_SAMCONFIGURATION, sam_result)) {
+    ESP_LOGW(TAG, "SPD wake SAMConfiguration response failed");
+  }
+
+  // Restore MaxRetries (MxRtyPassiveActivation=0x00) lost during PowerDown.
+  // Without this, InListPassiveTarget retries REQA multiple times, breaking
+  // the 1:1 REQA-to-ECP ratio required for HomeKey.
+  if (!this->write_command_({
+          PN532_COMMAND_RFCONFIGURATION,
+          0x05,
+          0xFF,  // MxRtyATR
+          0x01,  // MxRtyPSL
+          0x00   // MxRtyPassiveActivation
+      })) {
+    ESP_LOGW(TAG, "SPD wake RFConfiguration failed");
+    return;
+  }
+  std::vector<uint8_t> rf_result;
+  if (!this->read_response(PN532_COMMAND_RFCONFIGURATION, rf_result)) {
+    ESP_LOGW(TAG, "SPD wake RFConfiguration response failed");
+  }
 }
 
 void PN532::turn_off_rf_() {

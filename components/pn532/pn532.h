@@ -69,6 +69,8 @@ class PN532 : public PollingComponent {
 
  protected:
   void turn_off_rf_();
+  void enter_low_power_();
+  void wake_from_spd_();
   bool write_command_(const std::vector<uint8_t> &data);
   bool read_ack_();
   void send_ack_();
@@ -111,6 +113,7 @@ class PN532 : public PollingComponent {
   std::vector<uint8_t> ecp_command_frame_;
 
   bool updates_enabled_{ true };
+  bool in_spd_{false};
   bool requested_read_{ false };
   bool target_still_present{ false };
   bool requested_ecp_{ false };
