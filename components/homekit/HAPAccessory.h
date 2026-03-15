@@ -22,6 +22,9 @@
 #ifdef USE_CLIMATE
 #include "climate.hpp"
 #endif
+#ifdef USE_BINARY_SENSOR
+#include "binary_sensor.hpp"
+#endif
 namespace esphome
 {
   namespace homekit
@@ -65,6 +68,10 @@ namespace esphome
       #ifdef USE_CLIMATE
       std::vector<ClimateEntity*> climates;
       ClimateEntity* add_climate(climate::Climate* sensorPtr);
+      #endif
+      #ifdef USE_BINARY_SENSOR
+      std::vector<BinarySensorEntity*> binary_sensors;
+      BinarySensorEntity* add_binary_sensor(binary_sensor::BinarySensor* binarySensorPtr);
       #endif
     };
   }

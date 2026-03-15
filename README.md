@@ -30,6 +30,7 @@ See [Components](#3-components) for documentation.
 | Switch | On/Off                                                                |                                                                                                                                                     |
 | Sensor | Temperature, Humidity, Illuminance, Air Quality, CO2, CO, PM10, PM2.5 | `device_class` property has to be declared with the sensor type as per HASS [docs](https://www.home-assistant.io/integrations/sensor/#device-class) |
 | Fan    | On/Off                                                                |                                                                                                                                                     |
+| Binary Sensor | Contact, Motion, Occupancy, Smoke, CO, Leak                  | `device_class` property determines the HomeKit service type, see [docs](https://www.home-assistant.io/integrations/binary_sensor/#device-class)     |
 
 ## 2. Prerequisites
 
@@ -226,6 +227,47 @@ This is what handles the accessory logic like syncing states between HomeKit and
            serial_number: "42424242"
            fw_rev: "0.16.2"
    ```
+- **binary_sensor** (Optional): Array of Binary Sensor Entities
+  - **id** (Required, [Binary Sensor](https://esphome.io/components/binary_sensor/)): Id of the binary sensor entity
+  - **meta** (Optional): Accessory information
+    - **name** (Optional, string): Name of the accessory, defaults to name of the entity
+    - **model** (Optional, string): Model name for the accessory
+    - **manufacturer** (Optional, string): Manufacturer name for the accessory
+    - **serial_number** (Optional, string): Serial number for the accessory, defaults to internal object id
+    - **fw_rev** (Optional, string): Firmware revision for the accessory
+
+  The HomeKit service type is automatically determined by the `device_class` of the binary sensor:
+
+  | Device Class | HomeKit Service |
+  |---|---|
+  | `door`, `window`, `opening`, `garage_door`, `vibration`, `tamper` | Contact Sensor |
+  | `motion` | Motion Sensor |
+  | `occupancy` | Occupancy Sensor |
+  | `smoke` | Smoke Sensor |
+  | `gas` | Carbon Monoxide Sensor |
+  | `moisture`, `water` | Leak Sensor |
+  | _(other / unset)_ | Contact Sensor |
+
+  Example:
+  ```yaml
+  binary_sensor:
+    - platform: gpio
+      pin: GPIO5
+      id: front_door
+      name: "Front Door"
+      device_class: door
+
+  homekit:
+    binary_sensor:
+      - id: front_door
+        meta:
+          name: "Front Door Sensor"
+          manufacturer: "AMICI&CO"
+          model: "TACTUS"
+          serial_number: "42424242"
+          fw_rev: "0.16.2"
+  ```
+
 ## 4. HomeKey
 
 > [!NOTE]

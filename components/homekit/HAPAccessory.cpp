@@ -42,6 +42,11 @@ namespace esphome
         v->setup();
       }
       #endif
+      #ifdef USE_BINARY_SENSOR
+      for (const auto v : binary_sensors) {
+        v->setup();
+      }
+      #endif
     }
     void HAPAccessory::dump_config() {
       #ifdef USE_LOCK
@@ -58,6 +63,9 @@ namespace esphome
       #endif
       #ifdef USE_SWITCH
       ESP_LOGCONFIG(TAG, "Switch HK Entities: %d", switches.size());
+      #endif
+      #ifdef USE_BINARY_SENSOR
+      ESP_LOGCONFIG(TAG, "Binary Sensor HK Entities: %d", binary_sensors.size());
       #endif
     }
     #ifdef USE_LIGHT
@@ -103,6 +111,12 @@ namespace esphome
       climates.push_back(new ClimateEntity(climatePtr));
       return climates.back();
   }
+    #endif
+    #ifdef USE_BINARY_SENSOR
+    BinarySensorEntity* HAPAccessory::add_binary_sensor(binary_sensor::BinarySensor* binarySensorPtr) {
+      binary_sensors.push_back(new BinarySensorEntity(binarySensorPtr));
+      return binary_sensors.back();
+    }
     #endif
   }
 }
