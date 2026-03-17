@@ -364,57 +364,72 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
   auto automation_id_3 = new Automation<std::string, nfc::NfcTag>(trigger);
   auto lambdaaction_id_3 = new LambdaAction<std::string, nfc::NfcTag>(
       [this, ctx](std::string x, nfc::NfcTag tag) -> void {
-        auto versions =
-            ctx->inDataExchange({0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00,
-                                 0x08, 0x58, 0x01, 0x01, 0x0});
-        // Response format: [PN532_status] [APDU_data...] [SW1] [SW2]
-        // PN532 status: 0x00=success, 0x01=timeout, 0x0B=RF error
-        if (versions.empty()) {
-          ESP_LOGW(TAG, "Target probably not Homekey");
-        } else if (versions[0] != 0x00) {
-          ESP_LOGW(TAG, "SELECT failed, PN532 status: 0x%02X", versions[0]);
-          for (auto &&t : triggers_onhk_fail_) {
-            t->process();
+        // Retry the full SELECT + authenticate sequence on transient RF errors.
+        // Error 0x0B (RF Protocol Error) is a common transient glitch that
+        // resolves on the next attempt while the iPhone is still in the field.
+        constexpr int kMaxAttempts = 2;
+        for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+          if (attempt > 0) {
+            ESP_LOGW(TAG, "Retrying HomeKey authentication (attempt %d/%d)",
+                     attempt + 1, kMaxAttempts);
+            delay(50);
           }
-        } else if (versions.size() < 3 ||
-                   versions[versions.size() - 2] != 0x90 ||
-                   versions[versions.size() - 1] != 0x00) {
-          ESP_LOGE(TAG, "Invalid response for HK: %s",
-                   format_hex_pretty(versions).c_str());
-          for (auto &&t : triggers_onhk_fail_) {
-            t->process();
+          auto versions =
+              ctx->inDataExchange({0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00,
+                                   0x08, 0x58, 0x01, 0x01, 0x0});
+          // Response format: [PN532_status] [APDU_data...] [SW1] [SW2]
+          // PN532 status: 0x00=success, 0x01=timeout, 0x0B=RF error
+          if (versions.empty()) {
+            ESP_LOGW(TAG, "Target probably not Homekey");
+            break;  // PN532 failure or not HomeKey — don't retry
           }
-        } else {
+          if (versions[0] != 0x00) {
+            ESP_LOGW(TAG, "SELECT failed, PN532 status: 0x%02X", versions[0]);
+            if (attempt == kMaxAttempts - 1) {
+              for (auto &&t : triggers_onhk_fail_)
+                t->process();
+            }
+            continue;  // Transient RF error — retry
+          }
+          if (versions.size() < 3 ||
+              versions[versions.size() - 2] != 0x90 ||
+              versions[versions.size() - 1] != 0x00) {
+            ESP_LOGE(TAG, "Invalid response for HK: %s",
+                     format_hex_pretty(versions).c_str());
+            for (auto &&t : triggers_onhk_fail_)
+              t->process();
+            break;  // Applet-level error — don't retry
+          }
+
           ESP_LOGD(TAG, "HK SUPPORTED VERSIONS: %s",
                    format_hex_pretty(versions).c_str());
 
           std::unique_ptr<HKAuthenticationContext> authCtx;
-          if (xSemaphoreTake(auth_ctx_mutex_, 0) == pdTRUE) {
+          if (attempt == 0 && xSemaphoreTake(auth_ctx_mutex_, 0) == pdTRUE) {
             authCtx = std::move(cached_auth_ctx_);
             xSemaphoreGive(auth_ctx_mutex_);
           }
           if (!authCtx) {
-            ESP_LOGI(TAG, "Auth context cache miss, generating...");
-            authCtx.reset(new HKAuthenticationContext(nfc_lambda_, readerData, savedHKdata));
+            if (attempt == 0)
+              ESP_LOGI(TAG, "Auth context cache miss, generating...");
+            authCtx.reset(
+                new HKAuthenticationContext(nfc_lambda_, readerData, savedHKdata));
           }
 
           auto authResult = authCtx->authenticate(KeyFlow(kFlowFAST));
 
-          if (precompute_task_handle_) {
-            xTaskNotifyGive(precompute_task_handle_);
-          }
-
           if (std::get<0>(authResult).size() > 0 &&
               std::get<2>(authResult) != kFlowFailed) {
-            for (auto &&t : triggers_onhk_) {
+            for (auto &&t : triggers_onhk_)
               t->process(hex_representation(std::get<0>(authResult)),
                          hex_representation(std::get<1>(authResult)));
-            }
-          } else {
-            for (auto &&t : triggers_onhk_fail_) {
-              t->process();
-            }
+            break;  // Success
           }
+          if (attempt == kMaxAttempts - 1) {
+            for (auto &&t : triggers_onhk_fail_)
+              t->process();
+          }
+          // Auth failed — loop back to retry SELECT + authenticate
         }
         if (precompute_task_handle_) {
           xTaskNotifyGive(precompute_task_handle_);
