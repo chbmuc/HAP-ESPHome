@@ -1,6 +1,9 @@
 #include "pn532_uart.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+
+#include <algorithm>
 
 // Based on:
 // - https://cdn-shop.adafruit.com/datasheets/PN532C106_Application+Note_v1.2.pdf
@@ -14,6 +17,9 @@ static const char *const TAG = "pn532_uart";
 
 // Maximum bytes to log in verbose hex output
 static constexpr size_t PN532_MAX_LOG_BYTES = 64;
+
+// Give up on a response if no new byte arrives for this long
+static constexpr uint32_t PN532_READ_TIMEOUT_MS = 100;
 
 static const uint8_t WAKEUP_REQUEST[] = {0x55, 0x55, 0x00, 0x00, 0x00};
 
@@ -72,7 +78,9 @@ bool PN532Uart::read_response(uint8_t command, std::vector<uint8_t> &data) {
   }
 
   std::vector<uint8_t> header(7);
-  this->read_array(header.data(), 7);
+  if (!this->read_bytes_(header.data(), 7)) {
+    return false;
+  }
 
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
   char hex_buf[format_hex_pretty_size(PN532_MAX_LOG_BYTES)];
@@ -105,7 +113,9 @@ bool PN532Uart::read_response(uint8_t command, std::vector<uint8_t> &data) {
   if (extended_frame) {
     ESP_LOGV(TAG, "Abnormal length and checksum, possible Extended Frame");
     header.resize(10);
-    this->read_array(header.data() + 7, 3);
+    if (!this->read_bytes_(header.data() + 7, 3)) {
+      return false;
+    }
     ESP_LOGV(TAG, "EF: Header data: %s", format_hex_pretty(header).c_str());
     if ((uint8_t)(header[5] + header[6] + header[7]) != 0) {
       ESP_LOGV(TAG, "EF: read data invalid header!");
@@ -122,7 +132,9 @@ bool PN532Uart::read_response(uint8_t command, std::vector<uint8_t> &data) {
   ESP_LOGV(TAG, "Reading response of length %d", len);
 
   data.resize(len + 1);
-  this->read_array(data.data(), len + 1);
+  if (!this->read_bytes_(data.data(), len + 1)) {
+    return false;
+  }
 
   ESP_LOGV(TAG, "Response data: %s", format_hex_pretty_to(hex_buf, sizeof(hex_buf), data.data(), data.size()));
 
@@ -152,6 +164,33 @@ bool PN532Uart::read_response(uint8_t command, std::vector<uint8_t> &data) {
     return false;
   }
 
+  return true;
+}
+
+// UARTDevice::read_array() waits until all `len` bytes are in the RX ring
+// buffer. Extended frames (e.g. the 256-byte ENVELOPE responses of the
+// HomeKey attestation flow) don't fit the default 256-byte buffer, so that
+// wait never ends. Drain the buffer in chunks as data arrives instead.
+bool PN532Uart::read_bytes_(uint8_t *data, size_t len) {
+  uint32_t last_rx = millis();
+  size_t pos = 0;
+  while (pos < len) {
+    size_t avail = this->available();
+    if (avail == 0) {
+      if (millis() - last_rx > PN532_READ_TIMEOUT_MS) {
+        ESP_LOGW(TAG, "Timed out reading response at byte %zu of %zu", pos, len);
+        return false;
+      }
+      yield();
+      continue;
+    }
+    size_t chunk = std::min(avail, len - pos);
+    if (!this->read_array(data + pos, chunk)) {
+      return false;
+    }
+    pos += chunk;
+    last_rx = millis();
+  }
   return true;
 }
 

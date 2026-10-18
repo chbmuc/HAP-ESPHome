@@ -349,6 +349,12 @@ void LockEntity::set_nfc_ctx(pn532::PN532 *ctx) {
     }
     data.erase(data.begin());
     ESP_LOGD("LockEntity", "%s", format_hex_pretty(data).c_str());
+    // *resLen holds the capacity of the caller's buffer on input
+    if (data.size() > *resLen) {
+      ESP_LOGE("LockEntity", "Response (%zu bytes) exceeds buffer (%u bytes), truncating",
+               data.size(), *resLen);
+      data.resize(*resLen);
+    }
     memcpy(res, data.data(), data.size());
     uint16_t t = data.size();
     memcpy(resLen, &t, sizeof(uint16_t));
