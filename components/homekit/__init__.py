@@ -79,7 +79,7 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Optional("binary_sensor"):  cv.ensure_list({cv.Required(CONF_ID): cv.use_id(binary_sensor.BinarySensor), cv.Optional("meta") : ACCESSORY_INFORMATION}),
 }).extend(cv.COMPONENT_SCHEMA),
 cv.only_on([PLATFORM_ESP32]),
-cv.only_with_esp_idf)
+cv.only_with_framework("esp-idf"))
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])

@@ -1,6 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_PORT, PLATFORM_ESP32, CONF_ID
+from esphome.core import CORE
 from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
 import re
 
@@ -44,9 +45,13 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Optional("setup_id", default="ES32"): cv.All(cv.string_strict,cv.Upper,cv.Length(min=4, max=4, msg="Setup ID has to be a 4 character long alpha numeric string (with capital letters)"))
 }).extend(cv.COMPONENT_SCHEMA),
 cv.only_on([PLATFORM_ESP32]),
-cv.only_with_esp_idf)
+cv.only_with_framework("esp-idf"))
 
 async def to_code(config):
+    # ESPHome's libsodium (pulled in by noise-c) lacks primitives HomeKit needs
+    # and clashes with espressif/libsodium required by esp_hap_core
+    if getattr(CORE, "using_toolchain_esp_idf", False):
+        cg.add_platformio_option("lib_ignore", ["libsodium"])
     add_idf_component(
         name="esp_hap_core",
         repo="https://github.com/rednblkx/esp-homekit-sdk",

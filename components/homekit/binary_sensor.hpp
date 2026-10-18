@@ -63,7 +63,8 @@ namespace esphome
           hap_char_t* state_char = nullptr;
 
           // Find the service and characteristic based on device class using helper
-          const std::string& device_class = obj->get_device_class_ref();
+          char dc_buf[MAX_DEVICE_CLASS_LENGTH];
+          const std::string device_class = obj->get_device_class_to(dc_buf);
           const char* service_uuid;
           const char* char_uuid;
           resolve_service_mapping(device_class, service_uuid, char_uuid);
@@ -93,7 +94,8 @@ namespace esphome
         if (serv_priv) {
           binary_sensor::BinarySensor* binarySensorPtr = (binary_sensor::BinarySensor*)serv_priv;
           ESP_LOGD(TAG, "Read called for Accessory %s (%s)", std::to_string(binarySensorPtr->get_object_id_hash()).c_str(), binarySensorPtr->get_name().c_str());
-          const std::string& device_class = binarySensorPtr->get_device_class_ref();
+          char dc_buf[MAX_DEVICE_CLASS_LENGTH];
+          const std::string device_class = binarySensorPtr->get_device_class_to(dc_buf);
           const char* service_uuid = nullptr;
           const char* char_uuid = nullptr;
           resolve_service_mapping(device_class, service_uuid, char_uuid);
@@ -136,7 +138,8 @@ namespace esphome
         hap_acc_t* accessory = nullptr;
         hap_serv_t* service = nullptr;
         std::string accessory_name = binarySensorPtr->get_name();
-        const std::string& device_class = binarySensorPtr->get_device_class_ref();
+        char dc_buf[MAX_DEVICE_CLASS_LENGTH];
+        const std::string device_class = binarySensorPtr->get_device_class_to(dc_buf);
 
         if (accessory_info[NAME] == NULL) {
           acc_cfg.name = strdup(accessory_name.c_str());
